@@ -3,7 +3,7 @@ from pawpal_system import Task, Pet, Owner, Scheduler
 
 def main():
     # Create owner
-    owner = Owner(name="Alex", available_time=(8, 18))  # 8 AM to 6 PM
+    owner = Owner(name="Alex", available_time=(8, 22))  # 8 AM to 10 PM
 
     # Create pets
     dog = Pet(name="Buddy", species="Dog", age=5, care_notes="Needs daily walks")
@@ -14,11 +14,13 @@ def main():
     owner.add_pet(cat)
 
     # Create tasks
+    # Time always comes first, from morning in top to evening in bottom
+    # If 2 tasks have the same time, they are ordered by priority, with 1 being the highest priority
     task1 = Task(
         title="Morning Walk",
         category="Exercise",
         duration=1,
-        priority=3,
+        priority=1,
         preferred_time_of_day="morning",
         pet_name="Buddy"
     )
@@ -26,8 +28,8 @@ def main():
     task2 = Task(
         title="Feed Cat",
         category="Feeding",
-        duration=0.5,
-        priority=2,
+        duration=2,
+        priority=1,
         preferred_time_of_day="morning",
         pet_name="Whiskers"
     )
@@ -35,8 +37,8 @@ def main():
     task3 = Task(
         title="Evening Play",
         category="Enrichment",
-        duration=1,
-        priority=1,
+        duration=2,
+        priority=3,
         preferred_time_of_day="evening",
         pet_name="Buddy"
     )
@@ -49,13 +51,14 @@ def main():
     # Create scheduler
     scheduler = Scheduler(owner=owner)
 
-    # Generate schedule
+    # Generate and print schedule
     schedule = scheduler.fit_tasks_into_schedule()
 
-    # Print schedule
     print("\nToday's Schedule:\n")
     for task_title, pet_name, start, end in schedule:
-        print(f"{start}:00 - {end}:00 | {task_title} ({pet_name})")
+        time_block = f"{start} - {end}"
+        print(f"  {time_block:<22}  |  {task_title} ({pet_name})")
+    print()
 
 
 if __name__ == "__main__":
