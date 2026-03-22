@@ -2,9 +2,6 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Dict
 
 
-# ----------------------
-# Task
-# ----------------------
 @dataclass
 class Task:
     title: str
@@ -12,22 +9,19 @@ class Task:
     duration: float
     priority: int
     preferred_time_of_day: str
-    pet_name: str  #  FIX 1: Added reference to which pet this task belongs to
+    pet_name: str  
     completion_flag: bool = False
 
     def mark_complete(self) -> None:
-        pass
+        self.completion_flag = True
 
     def reset_status(self) -> None:
-        pass
+        self.completion_flag = False
 
     def fits_in_time_window(self, start_time, end_time) -> bool:
-        pass
+        return self.duration <= (end_time - start_time)
 
 
-# ----------------------
-# Pet
-# ----------------------
 @dataclass
 class Pet:
     name: str
@@ -37,37 +31,40 @@ class Pet:
     tasks: List[Task] = field(default_factory=list)
 
     def add_task(self, task: Task) -> None:
-        pass
+        self.tasks.append(task)
 
     def remove_task(self, task: Task) -> None:
-        pass
+        if task in self.tasks:
+            self.tasks.remove(task)
 
     def sort_tasks(self, factor: str) -> List[Task]:
-        pass
+        if factor == "priority":
+            return sorted(self.tasks, key=lambda t: t.priority, reverse=True)
+        elif factor == "category":
+            return sorted(self.tasks, key=lambda t: t.category)
+        return self.tasks
 
 
-# ----------------------
-# Owner
-# ----------------------
 @dataclass
 class Owner:
     name: str
-    available_time: Tuple[int, int]  # FIX 2: Made time explicit (start_hour, end_hour as ints)
+    available_time: Tuple[int, int]  
     pets: List[Pet] = field(default_factory=list)
 
     def add_pet(self, pet: Pet) -> None:
-        pass
+        self.pets.append(pet)
 
     def remove_pet(self, pet: Pet) -> None:
-        pass
+        if pet in self.pets:
+            self.pets.remove(pet)
 
     def get_all_tasks(self) -> List[Task]:
-        pass
+        all_tasks = []
+        for pet in self.pets:
+            all_tasks.extend(pet.tasks)
+        return all_tasks
 
 
-# ----------------------
-# Scheduler
-# ----------------------
 @dataclass
 class Scheduler:
     owner: Owner
@@ -75,7 +72,33 @@ class Scheduler:
     constraints: Dict = field(default_factory=dict)
 
     def sort_tasks_by_priority_and_time(self) -> List[Task]:
-        pass
+        tasks = self.owner.get_all_tasks()
+
+        tasks = [t for t in tasks if not t.completion_flag]
+
+        time_order = {
+            "morning": 0,
+            "afternoon": 1,
+            "evening": 2
+        }
+
+        return sorted(
+            tasks,
+            key=lambda t: (-t.priority, time_order.get(t.preferred_time_of_day, 3))
+        )
 
     def fit_tasks_into_schedule(self):
-        pass
+        start_time, end_time = self.owner.available_time
+        current_time = start_time
+        schedule = []
+
+        tasks = self.sort_tasks_by_priority_and_time()
+
+        for task in tasks:
+            if current_time + task.duration <= end_time:
+                schedule.append(
+                    (task.title, task.pet_name, current_time, current_time + task.duration)
+                )
+                current_time += task.duration
+
+        return schedule
