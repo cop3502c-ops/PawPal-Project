@@ -1,3 +1,4 @@
+from pawpal_system import Owner, Pet, Task, Scheduler
 import streamlit as st
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
@@ -53,14 +54,22 @@ col1, col2, col3 = st.columns(3)
 with col1:
     task_title = st.text_input("Task title", value="Morning walk")
 with col2:
-    duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
+    duration = st.number_input("Duration (hours)", min_value=0.25, max_value=8.0, value=1.0, step=0.25)
 with col3:
-    priority = st.selectbox("Priority", ["low", "medium", "high"], index=2)
+    priority = st.number_input("Priority (1 = highest)", min_value=1, max_value=10, value=1)
+
+time_of_day = st.selectbox("Time of day", ["morning", "afternoon", "evening"])
+category = st.text_input("Category", value="Exercise")
 
 if st.button("Add task"):
-    st.session_state.tasks.append(
-        {"title": task_title, "duration_minutes": int(duration), "priority": priority}
-    )
+    st.session_state.tasks.append({
+        "title":                task_title,
+        "category":             category,
+        "duration":             float(duration),
+        "priority":             int(priority),
+        "preferred_time_of_day": time_of_day,
+        "pet_name":             pet_name,
+    })
 
 if st.session_state.tasks:
     st.write("Current tasks:")
@@ -71,18 +80,37 @@ else:
 st.divider()
 
 st.subheader("Build Schedule")
-st.caption("This button should call your scheduling logic once you implement it.")
+st.caption("This button calls your scheduling logic.")
 
 if st.button("Generate schedule"):
-    st.warning(
-        "Not implemented yet. Next step: create your scheduling logic (classes/functions) and call it here."
-    )
-    st.markdown(
-        """
-Suggested approach:
-1. Design your UML (draft).
-2. Create class stubs (no logic).
-3. Implement scheduling behavior.
-4. Connect your scheduler here and display results.
-"""
-    )
+    if not st.session_state.tasks:
+        st.warning("Add at least one task before generating a schedule.")
+    else:
+        # Build owner, pet, and tasks from inputs
+        owner = Owner(name=owner_name, available_time=(8, 18))
+        pet   = Pet(name=pet_name, species=species, age=0, care_notes="")
+
+        for t in st.session_state.tasks:
+            task = Task(
+                title=t["title"],
+                category=t["category"],
+                duration=t["duration"],
+                priority=t["priority"],
+                preferred_time_of_day=t["preferred_time_of_day"],
+                pet_name=t["pet_name"],
+            )
+            pet.add_task(task)   # Pet.add_task()
+
+        owner.add_pet(pet)       # Owner.add_pet()
+
+        scheduler = Scheduler(owner=owner)
+        schedule  = scheduler.fit_tasks_into_schedule()
+
+        if not schedule:
+            st.error("No tasks could be scheduled. Check durations and time of day.")
+        else:
+            st.success("Schedule generated!")
+            st.markdown("### Today's Schedule")
+            for title, pname, start, end in schedule:
+                st.markdown(f"🕐 **{start} – {end}** &nbsp;|&nbsp; {title} *({pname})*")
+        #python -m streamlit run app.py runs the game
