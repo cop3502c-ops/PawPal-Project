@@ -1,5 +1,6 @@
 from pawpal_system import Owner, Pet, Task, Scheduler
 import streamlit as st
+from datetime import date
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
@@ -60,20 +61,60 @@ with col3:
 
 time_of_day = st.selectbox("Time of day", ["morning", "afternoon", "evening"])
 category = st.text_input("Category", value="Exercise")
+frequency = st.selectbox("Frequency", ["once", "daily", "weekly"])  # new
 
 if st.button("Add task"):
     st.session_state.tasks.append({
-        "title":                task_title,
-        "category":             category,
-        "duration":             float(duration),
-        "priority":             int(priority),
+        "title":                 task_title,
+        "category":              category,
+        "duration":              float(duration),
+        "priority":              int(priority),
         "preferred_time_of_day": time_of_day,
-        "pet_name":             pet_name,
+        "pet_name":              pet_name,
+        "frequency":             frequency,  # new
     })
 
 if st.session_state.tasks:
     st.write("Current tasks:")
     st.table(st.session_state.tasks)
+
+    st.markdown("### Mark Task Complete")
+    task_titles = [t["title"] for t in st.session_state.tasks
+                   if not t.get("completed", False)]
+    if task_titles:
+        selected = st.selectbox("Select a task to mark complete", task_titles)
+        if st.button("Mark Complete"):
+            for t in st.session_state.tasks:
+                if t["title"] == selected and not t.get("completed", False):
+                    t["completed"] = True
+                    # Auto-create next occurrence for recurring tasks
+                    if t.get("frequency") in ("daily", "weekly"):
+                        from datetime import date, timedelta
+                        current_due = t.get("due_date", date.today())
+                        if isinstance(current_due, str):
+                            current_due = date.today()
+                        next_due = current_due + (
+                            timedelta(days=1) if t["frequency"] == "daily"
+                            else timedelta(weeks=1)
+                        )
+                        st.session_state.tasks.append({
+                            "title":                 t["title"],
+                            "category":              t["category"],
+                            "duration":              t["duration"],
+                            "priority":              t["priority"],
+                            "preferred_time_of_day": t["preferred_time_of_day"],
+                            "pet_name":              t["pet_name"],
+                            "frequency":             t["frequency"],
+                            "due_date":              next_due,
+                            "completed":             False,
+                        })
+                        st.success(f"'{selected}' marked complete! Next occurrence created for {next_due}.")
+                    else:
+                        st.success(f"'{selected}' marked complete!")
+                    break
+            st.rerun()
+    else:
+        st.info("All tasks are complete!")
 else:
     st.info("No tasks yet. Add one above.")
 
@@ -86,11 +127,18 @@ if st.button("Generate schedule"):
     if not st.session_state.tasks:
         st.warning("Add at least one task before generating a schedule.")
     else:
-        # Build owner, pet, and tasks from inputs
+        # Build owner
         owner = Owner(name=owner_name, available_time=(8, 18))
-        pet   = Pet(name=pet_name, species=species, age=0, care_notes="")
+
+        # Build one Pet per unique pet_name in tasks
+        pets = {}
+        for t in st.session_state.tasks:
+            if t["pet_name"] not in pets:
+                pets[t["pet_name"]] = Pet(name=t["pet_name"], species=species, age=0, care_notes="")
 
         for t in st.session_state.tasks:
+            if t.get("completed", False):
+                continue
             task = Task(
                 title=t["title"],
                 category=t["category"],
@@ -98,10 +146,13 @@ if st.button("Generate schedule"):
                 priority=t["priority"],
                 preferred_time_of_day=t["preferred_time_of_day"],
                 pet_name=t["pet_name"],
+                frequency=t["frequency"],
+                due_date=date.today(),
             )
-            pet.add_task(task)   # Pet.add_task()
+            pets[t["pet_name"]].add_task(task)
 
-        owner.add_pet(pet)       # Owner.add_pet()
+        for pet in pets.values():
+            owner.add_pet(pet)
 
         scheduler = Scheduler(owner=owner)
         schedule  = scheduler.fit_tasks_into_schedule()
@@ -113,4 +164,14 @@ if st.button("Generate schedule"):
             st.markdown("### Today's Schedule")
             for title, pname, start, end in schedule:
                 st.markdown(f"🕐 **{start} – {end}** &nbsp;|&nbsp; {title} *({pname})*")
-        #python -m streamlit run app.py runs the game
+
+            # Conflict detection — new
+            conflicts = scheduler.detect_conflicts(schedule)
+            if conflicts:
+                st.markdown("### ⚠️ Conflicts Detected")
+                for warning in conflicts:
+                    st.warning(warning)
+            else:
+                st.success("✅ No conflicts detected.")
+
+#python -m streamlit run app.py runs the game
