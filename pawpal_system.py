@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
+from datetime import date, timedelta
 
 
 # ---------------------------------------------------------------------------
@@ -37,10 +38,44 @@ class Task:
     preferred_time_of_day: str
     pet_name: str
     completion_flag: bool = False
+    frequency: str = "once"          # "once" | "daily" | "weekly"
+    due_date: Optional[date] = None  # tracks when this occurrence is due
 
-    def mark_complete(self) -> None:
-        """Mark the task as completed."""
+    def mark_complete(self) -> Optional["Task"]:
+        """
+        Mark the task as completed.
+        If frequency is 'daily' or 'weekly', automatically creates and returns
+        a new Task instance for the next occurrence using timedelta.
+        Returns None if frequency is 'once'.
+        """
         self.completion_flag = True
+
+        if self.frequency == "daily":
+            next_due = (self.due_date or date.today()) + timedelta(days=1)
+            return Task(
+                title=self.title,
+                category=self.category,
+                duration=self.duration,
+                priority=self.priority,
+                preferred_time_of_day=self.preferred_time_of_day,
+                pet_name=self.pet_name,
+                frequency=self.frequency,
+                due_date=next_due,
+            )
+        elif self.frequency == "weekly":
+            next_due = (self.due_date or date.today()) + timedelta(weeks=1)
+            return Task(
+                title=self.title,
+                category=self.category,
+                duration=self.duration,
+                priority=self.priority,
+                preferred_time_of_day=self.preferred_time_of_day,
+                pet_name=self.pet_name,
+                frequency=self.frequency,
+                due_date=next_due,
+            )
+
+        return None  # "once" tasks don't recur
 
     def reset_status(self) -> None:
         """Reset the task's completion status to incomplete."""
@@ -66,6 +101,15 @@ class Pet:
     def add_task(self, task: Task) -> None:
         """Add a task to the pet's task list."""
         self.tasks.append(task)
+
+    def complete_task(self, task: Task) -> None:
+        """
+        Mark a task complete and, if it recurs, auto-add the next occurrence.
+        Uses timedelta internally via task.mark_complete().
+        """
+        next_task = task.mark_complete()
+        if next_task:
+            self.tasks.append(next_task)
 
     def remove_task(self, task: Task) -> None:
         """Remove a task from the pet's task list if it exists."""
@@ -126,48 +170,119 @@ class Scheduler:
              where 1 is the highest priority (lowest number = most urgent).
         """
         tasks = [t for t in self.owner.get_all_tasks() if not t.completion_flag]
-
-        # Rule 1: enforce chronological window order
         time_order = {"morning": 0, "afternoon": 1, "evening": 2}
-
-        # Rule 2: within the same window, lower priority number goes first
         return sorted(
             tasks,
             key=lambda t: (time_order.get(t.preferred_time_of_day, 3), t.priority)
         )
 
+    def sort_by_time(self) -> List[Task]:
+        """
+        Sort all tasks by time window only: morning → afternoon → evening.
+        Uses a lambda key on preferred_time_of_day string.
+        """
+        time_order = {"morning": 0, "afternoon": 1, "evening": 2}
+        return sorted(
+            self.owner.get_all_tasks(),
+            key=lambda t: time_order.get(t.preferred_time_of_day, 3)
+        )
+
+    def filter_tasks(self, completed: bool = None, pet_name: str = None) -> List[Task]:
+        """
+        Filter tasks by completion status and/or pet name.
+          - completed=True  → only completed tasks
+          - completed=False → only incomplete tasks
+          - completed=None  → all tasks regardless of status
+          - pet_name        → only tasks belonging to that pet (case-insensitive)
+        """
+        tasks = self.owner.get_all_tasks()
+
+        if completed is not None:
+            tasks = [t for t in tasks if t.completion_flag == completed]
+
+        if pet_name is not None:
+            tasks = [t for t in tasks if t.pet_name.lower() == pet_name.lower()]
+
+        return tasks
+
+    def detect_conflicts(self, schedule: List[Tuple[str, str, str, str]]) -> List[str]:
+        """
+        Lightweight conflict detection — checks if any two scheduled tasks
+        overlap in time. Returns a list of warning strings rather than crashing.
+
+        Two tasks conflict if one starts before the other ends:
+            A.start < B.end AND B.start < A.end
+        """
+        warnings = []
+
+        def to_minutes(time_str: str) -> int:
+            period = "PM" in time_str
+            parts = time_str.replace("AM", "").replace("PM", "").strip().split(":")
+            h, m = int(parts[0]), int(parts[1])
+            if period and h != 12:
+                h += 12
+            if not period and h == 12:
+                h = 0
+            return h * 60 + m
+
+        for i in range(len(schedule)):
+            for j in range(i + 1, len(schedule)):
+                title_a, pet_a, start_a, end_a = schedule[i]
+                title_b, pet_b, start_b, end_b = schedule[j]
+
+                a_start = to_minutes(start_a)
+                a_end   = to_minutes(end_a)
+                b_start = to_minutes(start_b)
+                b_end   = to_minutes(end_b)
+
+                if a_start < b_end and b_start < a_end:
+                    warnings.append(
+                        f"⚠️  Conflict: '{title_a}' ({pet_a}) [{start_a}–{end_a}] "
+                        f"overlaps with '{title_b}' ({pet_b}) [{start_b}–{end_b}]"
+                    )
+
+        return warnings
+
     def fit_tasks_into_schedule(self) -> List[Tuple[str, str, str, str]]:
         """
-        Schedule tasks respecting:
-          - preferred_time_of_day windows
-          - owner's available hours
-          - priority order within each window (lower number = more urgent)
+        Scheduling rules:
+          1. Time window comes first: morning (8-12) → afternoon (12-17) → evening (17-22).
+             A task never leaves its assigned window regardless of priority.
+          2. Within the same window, lower priority number is scheduled first (1 = most urgent).
+          3. Each pet has its own cursor per window — pets run in parallel.
+             This means two pets can have overlapping tasks, which detect_conflicts() will catch.
+          4. A task is skipped if its duration doesn't fit in the remaining window time
+             or would exceed the owner's available hours.
 
         Returns list of (task_title, pet_name, start_str, end_str).
         """
         owner_start, owner_end = self.owner.available_time
 
-        # Each window gets its own cursor so windows don't bleed into each other
-        window_cursors: Dict[str, float] = {
-            "morning":   max(owner_start, TIME_WINDOWS["morning"][0]),
-            "afternoon": max(owner_start, TIME_WINDOWS["afternoon"][0]),
-            "evening":   max(owner_start, TIME_WINDOWS["evening"][0]),
-            "other":     owner_start,
-        }
+        # Per-pet, per-window cursors so pets run in parallel
+        # Structure: pet_cursors[pet_name][window] = current_time
+        pet_cursors: Dict[str, Dict[str, float]] = {}
+        for pet in self.owner.pets:
+            pet_cursors[pet.name] = {
+                "morning":   max(owner_start, TIME_WINDOWS["morning"][0]),
+                "afternoon": max(owner_start, TIME_WINDOWS["afternoon"][0]),
+                "evening":   max(owner_start, TIME_WINDOWS["evening"][0]),
+                "other":     owner_start,
+            }
 
         schedule = []
 
         for task in self.sort_tasks_by_priority_and_time():
             pref = task.preferred_time_of_day.lower()
             window = TIME_WINDOWS.get(pref)
+            cursors = pet_cursors.get(task.pet_name, {})
 
             if window:
                 win_start, win_end = window
-                cursor   = window_cursors[pref]
-                start    = max(cursor, win_start)   # never before window opens
-                hard_end = min(win_end, owner_end)  # never past window or owner end
+                cursor   = cursors.get(pref, max(owner_start, win_start))
+                start    = max(cursor, win_start)
+                hard_end = min(win_end, owner_end)
             else:
-                cursor   = window_cursors["other"]
+                cursor   = cursors.get("other", owner_start)
                 start    = cursor
                 hard_end = owner_end
 
@@ -183,13 +298,12 @@ class Scheduler:
 
             schedule.append((task.title, task.pet_name, format_time(start), format_time(end)))
 
-            # Advance only this window's cursor
-            key = pref if pref in window_cursors else "other"
-            window_cursors[key] = end
+            # Advance only this pet's cursor for this window
+            key = pref if pref in cursors else "other"
+            pet_cursors[task.pet_name][key] = end
 
-        # Sort by start time for clean display
         def time_sort_key(entry):
-            time_str = entry[2]  # e.g. "8:00 AM"
+            time_str = entry[2]
             period = "PM" in time_str
             parts = time_str.replace("AM", "").replace("PM", "").strip().split(":")
             h, m = int(parts[0]), int(parts[1])
